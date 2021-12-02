@@ -57,7 +57,7 @@ function icecat_admin_notice() {
  * @param bool $import bool
  *   If it is wp all import.
  */
-function icecat_get_data($content, $is_new_content = FALSE, $import = FALSE) {
+function icecat_get_data($content, $language, $is_new_content = FALSE, $import = FALSE) {
   // Variable initializations.
   $product_category_id = NULL;
   $image_list = NULL;
@@ -80,7 +80,7 @@ function icecat_get_data($content, $is_new_content = FALSE, $import = FALSE) {
   );
 
   // Set the language.
-  $icecat->setLanguage(get_option('icecat_language'));
+  $icecat->setLanguage($language);
 
   // Set our product data.
   $icecat->setProductInfo(
@@ -560,11 +560,80 @@ function icecat_save_postdata($post_id) {
       }
     }
     // Download the iceat data on save.
-    icecat_get_data($post_id, TRUE);
+    icecat_get_i18n_data($post_id, TRUE);
   }
   elseif (current_filter() === 'pmxi_saved_post') {
-    icecat_get_data($post_id, TRUE, TRUE);
+      icecat_get_i18n_data($post_id, TRUE, TRUE);
   }
+}
+
+function icecat_get_i18n_data($content, $language, $is_new_content = FALSE, $import = FALSE) {
+    $languages = explode(',', get_option('icecat_language'));
+
+    if (count($languages) > 0 && function_exists('pll_get_post_translations')) {
+        foreach($languages as $language) {
+            $localized_post_id = icecat_get_post_in_language($content, $language);
+            if ($localized_post_id !== null) {
+                $localized_post_id = icecat_get_post_in_language($content, $language);
+                icecat_get_data($localized_post_id, $language, $is_new_content, $import);
+            } else {
+                $localized_post_id = icecat_create_post_in_language($content, $language);
+                icecat_get_data($localized_post_id, $language, $is_new_content, $import);
+            }
+        }
+    } else {
+        return icecat_get_data($content, $languages[0], $is_new_content, $import);
+    }
+}
+
+function icecat_get_post_in_language($post_id, $language) {
+    $post_translations = pll_get_post_translations( $post_id );
+    $found = false;
+    foreach($post_translations as $post_translation_language => $post_translation_id) {
+        if ($post_translation_language === $language) {
+            return $post_translation_id;
+        }
+    }
+
+    return null;
+}
+
+function icecat_create_post_in_language($post_id, $language) {
+    remove_action('save_post', 'icecat_save_postdata');
+    $new_post_id = icecat_duplicate_post($post_id);
+    pll_set_post_language($new_post_id, $language);
+
+    $translations = pll_get_post_translations($post_id);
+    $translations[$language] = $new_post_id;
+
+    pll_save_post_translations($translations);
+
+    if (get_option('icecat_on_save') === 'on') {
+        add_action('save_post', 'icecat_save_postdata');
+    }
+
+    return $new_post_id;
+}
+
+function icecat_duplicate_post($post_id) {
+    $title   = get_the_title($post_id);
+    $oldpost = get_post($post_id);
+    $post    = array(
+        'post_title' => $title,
+        'post_status' => 'publish',
+        'post_type' => $oldpost->post_type,
+        'post_author' => 1
+    );
+    $new_post_id = wp_insert_post($post);
+    // Copy post metadata
+    $data = get_post_custom($post_id);
+    foreach ( $data as $key => $values) {
+        foreach ($values as $value) {
+            add_post_meta( $new_post_id, $key, $value );
+        }
+    }
+
+    return $new_post_id;
 }
 
 /*
